@@ -1,10 +1,10 @@
 import { type Lab, type PaletteColor, type RGB, rgbToHex, rgbToLab } from '@/lib/color'
 
-const SAMPLE_SIZE = 110
+const SAMPLE_SIZE = 140
 const MAX_ITERATIONS = 30
 const CONVERGENCE_THRESHOLD = 0.4
 
-function seededRandom(seed: number) {
+export function seededRandom(seed: number) {
   let state = seed >>> 0
   return () => {
     state = (state + 0x6d2b79f5) >>> 0
@@ -15,14 +15,14 @@ function seededRandom(seed: number) {
   }
 }
 
-function squaredDistance(a: Lab, b: Lab) {
+export function squaredDistance(a: Lab, b: Lab) {
   const dl = a[0] - b[0]
   const da = a[1] - b[1]
   const db = a[2] - b[2]
   return dl * dl + da * da + db * db
 }
 
-function initializeCentroids(points: Lab[], k: number, random: () => number): Lab[] {
+export function initializeCentroids(points: Lab[], k: number, random: () => number): Lab[] {
   const centroids: Lab[] = [points[Math.floor(random() * points.length)]]
   const distances = new Float64Array(points.length).fill(Number.POSITIVE_INFINITY)
 
@@ -48,8 +48,8 @@ function initializeCentroids(points: Lab[], k: number, random: () => number): La
 }
 
 /** K-means++ clustering over CIELAB pixels. Returns clusters sorted by share of pixels. */
-export function kmeansPalette(pixels: RGB[], k: number): PaletteColor[] {
-  if (!pixels.length) return []
+export function kmeansPalette(pixels: RGB[], k: number): { palette: PaletteColor[]; labels: Uint8Array } {
+  if (!pixels.length) return { palette: [], labels: new Uint8Array(0) }
   const points = pixels.map(rgbToLab)
   const random = seededRandom(1337)
   const centroids = initializeCentroids(points, Math.min(k, points.length), random)
@@ -98,13 +98,67 @@ export function kmeansPalette(pixels: RGB[], k: number): PaletteColor[] {
     s[3] += 1
   }
 
-  return rgbSums
-    .filter((s) => s[3] > 0)
-    .map(([r, g, b, count]) => {
-      const rgb: RGB = [Math.round(r / count), Math.round(g / count), Math.round(b / count)]
-      return { rgb, hex: rgbToHex(rgb), lab: rgbToLab(rgb), proportion: count / pixels.length }
-    })
-    .sort((a, b) => b.proportion - a.proportion)
+  const order = rgbSums
+    .map((sum, index) => ({ sum, index }))
+    .filter(({ sum }) => sum[3] > 0)
+    .sort((a, b) => b.sum[3] - a.sum[3])
+
+  const remap = new Int32Array(centroids.length).fill(-1)
+  order.forEach(({ index }, rank) => {
+    remap[index] = rank
+  })
+
+  const labels = new Uint8Array(pixels.length)
+  for (let i = 0; i < pixels.length; i++) labels[i] = remap[assignments[i]]
+
+  const palette = order.map(({ sum: [r, g, b, count] }) => {
+    const rgb: RGB = [Math.round(r / count), Math.round(g / count), Math.round(b / count)]
+    return { rgb, hex: rgbToHex(rgb), lab: rgbToLab(rgb), proportion: count / pixels.length }
+  })
+
+  return { palette, labels }
+}
+
+export interface ImageAnalysis {
+  palette: PaletteColor[]
+  /** Cluster index (into `palette`) for every sampled pixel, row-major. */
+  labels: Uint8Array
+  width: number
+  height: number
+}
+
+/** Normalized (0–1) position of the cluster pixel closest to that cluster's spatial center. */
+export function clusterAnchor(analysis: ImageAnalysis, cluster: number) {
+  const { labels, width, height } = analysis
+  let sumX = 0
+  let sumY = 0
+  let count = 0
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] !== cluster) continue
+    sumX += i % width
+    sumY += Math.floor(i / width)
+    count++
+  }
+  if (!count) return { x: 0.5, y: 0.5 }
+  const cx = sumX / count
+  const cy = sumY / count
+  let best = 0
+  let bestDistance = Number.POSITIVE_INFINITY
+  for (let i = 0; i < labels.length; i++) {
+    if (labels[i] !== cluster) continue
+    const d = (i % width - cx) ** 2 + (Math.floor(i / width) - cy) ** 2
+    if (d < bestDistance) {
+      bestDistance = d
+      best = i
+    }
+  }
+  return { x: ((best % width) + 0.5) / width, y: (Math.floor(best / width) + 0.5) / height }
+}
+
+export function clusterAt(analysis: ImageAnalysis, x: number, y: number) {
+  const px = Math.min(analysis.width - 1, Math.max(0, Math.floor(x * analysis.width)))
+  const py = Math.min(analysis.height - 1, Math.max(0, Math.floor(y * analysis.height)))
+  return analysis.labels[py * analysis.width + px]
 }
 
 export function proxiedImageUrl(imageUrl: string) {
@@ -123,6 +177,23 @@ function loadImage(src: string) {
 }
 
 export async function extractPalette(imageUrl: string, k: number): Promise<PaletteColor[]> {
+  return (await analyzeImage(imageUrl, k)).palette
+}
+
+export async function analyzeImage(imageUrl: string, k: number): Promise<ImageAnalysis> {
+  const { pixels, width, height } = await readPixels(imageUrl)
+  const { palette, labels } = kmeansPalette(pixels, k)
+  return { palette, labels, width, height }
+}
+
+/** A deterministic random subset of an artwork's pixels, used by the step-by-step demo. */
+export async function samplePixels(imageUrl: string, count: number): Promise<RGB[]> {
+  const { pixels } = await readPixels(imageUrl)
+  const random = seededRandom(7)
+  return Array.from({ length: Math.min(count, pixels.length) }, () => pixels[Math.floor(random() * pixels.length)])
+}
+
+async function readPixels(imageUrl: string) {
   const image = await loadImage(proxiedImageUrl(imageUrl))
   const scale = Math.min(1, SAMPLE_SIZE / Math.max(image.naturalWidth, image.naturalHeight))
   const width = Math.max(1, Math.round(image.naturalWidth * scale))
@@ -138,9 +209,8 @@ export async function extractPalette(imageUrl: string, k: number): Promise<Palet
   const { data } = context.getImageData(0, 0, width, height)
   const pixels: RGB[] = []
   for (let i = 0; i < data.length; i += 4) {
-    if (data[i + 3] < 128) continue
     pixels.push([data[i], data[i + 1], data[i + 2]])
   }
 
-  return kmeansPalette(pixels, k)
+  return { pixels, width, height }
 }

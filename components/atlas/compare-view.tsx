@@ -3,7 +3,7 @@
 import { ArtworkSlot } from '@/components/atlas/artwork-slot'
 import { ComparisonPanel } from '@/components/atlas/comparison-panel'
 import { Slider } from '@/components/ui/slider'
-import { usePalette } from '@/hooks/use-art-data'
+import { useImageAnalysis } from '@/hooks/use-art-data'
 import type { Artwork } from '@/lib/artworks'
 
 interface CompareViewProps {
@@ -16,8 +16,8 @@ interface CompareViewProps {
 }
 
 export function CompareView({ artworkA, artworkB, k, onKChange, onSelectA, onSelectB }: CompareViewProps) {
-  const paletteA = usePalette(artworkA?.imageUrl, k)
-  const paletteB = usePalette(artworkB?.imageUrl, k)
+  const analysisA = useImageAnalysis(artworkA?.imageUrl, k)
+  const analysisB = useImageAnalysis(artworkB?.imageUrl, k)
 
   return (
     <div className="flex flex-col gap-6">
@@ -44,23 +44,23 @@ export function CompareView({ artworkA, artworkB, k, onKChange, onSelectA, onSel
         <ArtworkSlot
           label="A"
           artwork={artworkA}
-          palette={paletteA.data}
-          isAnalyzing={paletteA.isLoading}
-          error={paletteA.error}
+          analysis={analysisA.data}
+          isAnalyzing={analysisA.isLoading}
+          error={analysisA.error}
           onSelect={onSelectA}
         />
         <ArtworkSlot
           label="B"
           artwork={artworkB}
-          palette={paletteB.data}
-          isAnalyzing={paletteB.isLoading}
-          error={paletteB.error}
+          analysis={analysisB.data}
+          isAnalyzing={analysisB.isLoading}
+          error={analysisB.error}
           onSelect={onSelectB}
         />
       </div>
 
-      {paletteA.data && paletteB.data && artworkA && artworkB ? (
-        <ComparisonPanel paletteA={paletteA.data} paletteB={paletteB.data} />
+      {analysisA.data && analysisB.data && artworkA && artworkB ? (
+        <ComparisonPanel paletteA={analysisA.data.palette} paletteB={analysisB.data.palette} />
       ) : (
         <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
           Select a painting for both A and B to see the palette comparison.

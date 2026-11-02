@@ -2,8 +2,7 @@
 
 import useSWR from 'swr'
 import type { ArtworkSearchResponse } from '@/lib/artworks'
-import type { PaletteColor } from '@/lib/color'
-import { extractPalette } from '@/lib/kmeans'
+import { analyzeImage, type ImageAnalysis } from '@/lib/kmeans'
 
 export async function jsonFetcher<T>(url: string): Promise<T> {
   const response = await fetch(url)
@@ -21,10 +20,10 @@ export function useArtworkSearch(query: string) {
   })
 }
 
-export function usePalette(imageUrl: string | undefined, k: number) {
-  return useSWR<PaletteColor[], Error, [string, string, number] | null>(
-    imageUrl ? ['palette', imageUrl, k] : null,
-    ([, url, clusters]) => extractPalette(url, clusters),
+export function useImageAnalysis(imageUrl: string | undefined, k: number) {
+  return useSWR<ImageAnalysis, Error, [string, string, number] | null>(
+    imageUrl ? ['analysis', imageUrl, k] : null,
+    ([, url, clusters]) => analyzeImage(url, clusters),
     { revalidateOnFocus: false, revalidateIfStale: false },
   )
 }
